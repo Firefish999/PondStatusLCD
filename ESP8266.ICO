@@ -1,0 +1,934 @@
+/**
+ * Marks LCD pond monitor
+ *
+ *  Created on: V6.4  Nov 2017
+ *
+ */
+
+#include <Arduino.h>
+#include "SPI.h"
+#include "Adafruit_GFX.h"
+#include "Adafruit_ILI9341.h"
+#include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
+#include <Time.h>  
+#include <TimeLib.h>
+#include <ESP8266HTTPClient.h>
+#define TFT_DC 2
+#define TFT_CS 5
+#define USE_SERIAL Serial
+#include <WiFiUdp.h>
+#include <ESP8266WebServer.h>
+
+ESP8266WebServer server(80);
+//*************************************rtc ntp
+
+unsigned int localPort = 2390;      // local port to listen for UDP packets
+unsigned long secsSince1900;
+/* Don't hardwire the IP address or we won't get the benefits of the pool.
+ *  Lookup the IP address for the host name instead */
+//IPAddress timeServer(129, 6, 15, 28); // time.nist.gov NTP server
+IPAddress timeServerIP; // time.nist.gov NTP server address
+const char* ntpServerName = "time.nist.gov";
+
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+
+byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+
+// A UDP instance to let us send and receive packets over UDP
+WiFiUDP udp;
+
+//***************************************
+
+String value1, value2, value3, value4, value5, value6, value7; 
+String webString="";  
+int xx;
+int syncmarker;
+
+ESP8266WiFiMulti WiFiMulti;
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC);
+
+void setup() {
+
+    USE_SERIAL.begin(115200);
+   // USE_SERIAL.setDebugOutput(true);
+  tft.begin();
+  tft.setRotation(3);
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setTextSize(2);
+     tft.println("Connecting ");
+     delay(3000);
+  
+   
+  tft.setTextColor(ILI9341_WHITE);  tft.setTextSize(2);
+  tft.println("My IP: ");
+    tft.println();
+  tft.println(WiFi.localIP());
+    USE_SERIAL.print(WiFi.localIP());
+  delay(2000);
+     tft.fillScreen(ILI9341_BLACK);
+     tft.setTextColor(ILI9341_WHITE);  tft.setTextSize(2);
+           tft.println("  INITIALISING !!");
+         tft.println();
+           tft.println("  Please wait");
+    USE_SERIAL.println();
+    USE_SERIAL.println();
+    USE_SERIAL.println();
+
+    for(uint8_t t = 4; t > 0; t--) {
+        USE_SERIAL.printf("[SETUP] WAIT %d...\n", t);
+        USE_SERIAL.flush();
+        delay(1000);
+    }
+
+    WiFiMulti.addAP("NETGEN24G", "netgenisbest");
+     server.on("/", handleRoot);
+
+
+
+  server.on("/inline", [](){
+    server.send(200, "text/plain", "this works as well");
+  });
+
+  server.onNotFound(handleNotFound);
+
+  server.begin();
+
+
+  
+starter();
+}
+
+
+
+
+
+
+
+void loop() {
+  int xy=0;
+updater();
+int mn=(minute());
+int hr=(hour()); 
+int dy=(day());
+hr=hr*60;
+int minswk = mn+hr;
+String samplemn = "";
+String samplehr="";
+String sampledate="";
+samplemn=(value5.substring(14, 16)); 
+samplehr=(value5.substring(11, 13)); 
+sampledate=(value5.substring(8, 10)); 
+int smn=(samplemn.toInt());
+int shr=(samplehr.toInt());
+int sdate=(sampledate.toInt());
+int sts=smn+(60*shr);
+ Serial.print("Total mins elapsed SAMPLE :  ");
+ Serial.println(sts);
+ 
+ Serial.print("Total mins elapsed REAL   :  ");
+Serial.println(minswk);
+
+Serial.print("Sample date   :  ");
+Serial.println(sdate);
+
+
+
+server.handleClient();
+while (xy<59){
+  delay(500);
+  server.handleClient();
+  xy=xy+1;
+   // Serial.println("LOOP");
+    Serial.println(xy);
+
+  tft.setCursor(130, 20);
+
+if((minswk-sts)<21){
+  // in sync
+ // Serial.println("IN SYNC");
+  tft.setTextColor(ILI9341_GREEN); tft.setTextSize(0);
+ 
+}
+else{
+  //out of sync
+   //Serial.println("OUT OF SYNC");
+   tft.setTextColor(ILI9341_RED); tft.setTextSize(0);
+
+}
+
+if(dy<sdate || dy>sdate){
+  //Serial.print("Date out");
+  tft.setTextColor(ILI9341_RED); tft.setTextSize(0);
+}
+
+
+
+ 
+    tft.println(" "); 
+  tft.setTextSize(2);
+ tft.print("                         "); 
+   
+      tft.print("*"); 
+   
+delay(500);
+server.handleClient();
+  tft.setCursor(130, 20);
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(0);
+    tft.println(" "); 
+  tft.setTextSize(2);
+  tft.print("                         "); 
+  
+      tft.print("*"); 
+        
+}
+
+}
+
+
+
+void updater(){
+
+
+ // calculate current time into mins elapsed this week
+
+
+
+ //Serial.println(value5);
+    // wait for WiFi connection
+    if((WiFiMulti.run() == WL_CONNECTED)) {
+
+
+//****************************************************NTP
+
+  Serial.println("");
+  
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.println("Starting UDP");
+  udp.begin(localPort);
+  Serial.print("Local port: ");
+  Serial.println(udp.localPort());
+
+  timegrab();
+
+//*****************************************************
+      
+
+        HTTPClient http;
+
+        USE_SERIAL.print("[HTTP] begin...\n");
+        
+       // http.begin("http://net-gen.uk/datatest.php"); //HTTP
+            http.begin("http://net-gen.uk/data.php"); //HTTP            
+          //  http.begin("http://markfishlock.plus.com:88/index.html"); //HTTP
+
+
+            
+        USE_SERIAL.print("[HTTP] GET...\n");
+        // start connection and send HTTP header
+        int httpCode = http.GET();
+
+        // httpCode will be negative on error
+        if(httpCode > 0) {
+            // HTTP header has been send and Server response header has been handled
+            USE_SERIAL.printf("[HTTP] GET... code: %d\n", httpCode);
+
+            // file found at server
+            if(httpCode == HTTP_CODE_OK) {
+                String payload = http.getString();
+                USE_SERIAL.println(payload);
+
+
+
+//String value1, value2, value3, value4, value5, value6; 
+ 
+// For loop which will separate the String in parts
+// and assign them the the variables we declare
+for (int i = 0; i < payload.length(); i++) {
+  USE_SERIAL.println(i);
+  if (payload.substring(i, i+1) == "*") {
+    value1 = payload.substring(0, i);
+    value2= payload.substring(i+1);
+    break;
+  }
+}
+
+for (int i = 0; i < value2.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value2.substring(i, i+1) == "*") {
+   value3=  value2.substring(i+1);
+   value2 = value2.substring(0, i);
+    
+    break;
+  }
+}
+
+for (int i = 0; i < value3.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value3.substring(i, i+1) == "*") {
+   value4=  value3.substring(i+1);
+   value3 = value3.substring(0, i);
+    
+    break;
+  }
+}
+
+for (int i = 0; i < value4.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value4.substring(i, i+1) == "*") {
+   value5=  value4.substring(i+1);
+   value4 = value4.substring(0, i);
+    
+    break;
+  }
+}
+
+for (int i = 0; i < value5.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value5.substring(i, i+1) == "*") {
+   value6=  value5.substring(i+1);
+   value5 = value5.substring(0, i);
+    
+    break;
+  }
+}
+
+
+for (int i = 0; i < value6.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value6.substring(i, i+1) == "*") {
+   value7=  value6.substring(i+1);
+   value6 = value6.substring(0, i);
+    
+    break;
+  }
+}
+
+
+
+unsigned long start = micros();
+int depth=0;
+depth= value1.toInt();
+
+
+  tft.setCursor(130, 19);
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(0);
+    tft.println(" "); 
+  tft.setTextSize(2);
+ tft.print("                   "); 
+ tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));
+   tft.setCursor(130, 19);
+      tft.setTextColor(ILI9341_YELLOW); tft.setTextSize(0);
+    tft.println(" "); 
+  tft.setTextSize(2);
+  tft.print("                    "); 
+   tft.print(hour()); 
+      tft.print(":"); 
+      if(minute()<10){
+        tft.print("0");
+      }
+         tft.println(minute());  
+            
+// *****************************************UPDATE DEPTH
+   tft.setCursor(200, 67);
+      tft.setTextColor(ILI9341_BLACK); tft.setTextSize(3);
+        tft.print("            "); 
+     tft.print(char(0xda));tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda));
+   tft.setCursor(200, 67);
+      tft.setTextColor(ILI9341_WHITE); tft.setTextSize(3);
+          tft.print("            ");    tft.println(value1);
+
+ //*****************************************UPDATE WATER TEMP         
+ 
+              tft.setTextColor(ILI9341_BLACK); tft.setTextSize(3);
+        tft.print("      "); 
+     tft.print(char(0xda));tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda));
+        tft.setCursor(200, 90);
+      tft.setTextColor(ILI9341_WHITE); tft.setTextSize(3);
+          tft.print("            ");    tft.println(value2);
+
+          
+ //*****************************************UPDATE AIR WATER TEMP         
+  tft.setCursor(84, 161);
+
+
+ tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+
+tft.print(char(0xda));tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));
+  tft.setCursor(84, 161);
+     tft.setTextColor(ILI9341_WHITE); tft.setTextSize(2);
+     
+     if((value3.toInt())<10){
+       tft.print(" ");
+     }
+      tft.print(value3); tft.print(" ");tft.print(char(247));  tft.print("C"); 
+
+      //*****************************************UPDATE SYSTEM WATER TEMP         
+  tft.setCursor(84, 177);
+
+
+ tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+ 
+        
+     tft.print(char(0xda));tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));
+  tft.setCursor(200, 161);
+     tft.setTextColor(ILI9341_WHITE); tft.setTextSize(2);
+     if((value6.toInt())<10){
+       tft.print(" ");
+     }
+      tft.print("                ");    tft.print(value6);tft.print(char(247));    tft.print("C"); 
+
+         
+     
+  tft.setCursor(0, 220);
+
+
+ tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+      
+tft.print(char(0xda));tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda)); tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda)); tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));
+tft.setCursor(0, 220);
+
+if (value4=="1.0") {
+   tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);  
+  tft.println("OPTIMUM");
+ }
+  if (value4=="4.0") {
+      tft.setTextColor(ILI9341_ORANGE); tft.setTextSize(2);  
+  tft.println("HIGH");
+ }
+
+  if (value4=="99.0") {
+      tft.setTextColor(ILI9341_BLUE); tft.setTextSize(2);  
+  tft.println("VORTEX");
+ }
+
+  if (value4=="2.0") {
+      tft.setTextColor(ILI9341_ORANGE); tft.setTextSize(2);  
+  tft.println("WATER LOW");
+ }
+  if (value4=="3.0") {
+      tft.setTextColor(ILI9341_RED); tft.setTextSize(2);  
+  tft.println("EMERGENCY LOW");
+ }
+//****************************************************************************************Fill gauge
+
+
+ //************************************************************************************ gauge square 1
+
+   if((depth)<1270){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 218);
+  tft.print(char(0xda));
+  tft.setCursor(293, 218);
+ tft.setTextColor(ILI9341_RED); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 218); tft.print(char(0x5d)); }
+  else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295,218);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_RED); tft.setTextSize(2);  
+  tft.setCursor(295, 218);
+  tft.print(char(0xda));
+  
+ }
+
+  //************************************************************************************ gauge square 2
+
+   if((depth)<1280){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 200);
+  tft.print(char(0xda));
+  tft.setCursor(293, 200);
+ tft.setTextColor(ILI9341_ORANGE); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 200); tft.print(char(0x5d)); }
+  else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295,200);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_ORANGE); tft.setTextSize(2);  
+  tft.setCursor(295, 200);
+  tft.print(char(0xda));
+  
+ }
+ 
+
+   //************************************************************************************ gauge square 3
+
+   if((depth)<1287){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 182);
+  tft.print(char(0xda));
+  tft.setCursor(293, 182);
+ tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 182); tft.print(char(0x5d)); }
+  else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 182);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);  
+  tft.setCursor(295, 182);
+  tft.print(char(0xda));
+  
+ }
+
+
+ 
+  //************************************************************************************ gauge square 4
+
+
+    if((depth)<1292){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 164);
+  tft.print(char(0xda));
+  tft.setCursor(293, 164);
+ tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 164); tft.print(char(0x5d)); }
+  else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 164);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);  
+  tft.setCursor(295, 164);
+  tft.print(char(0xda));
+
+  
+ }
+
+
+//************************************************************************************ gauge square 5
+
+
+    if((depth)<1300){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 146);
+  tft.print(char(0xda));
+  tft.setCursor(293, 146);
+ tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 146); tft.print(char(0x5d)); }
+  else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 146);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_GREEN); tft.setTextSize(2);  
+  tft.setCursor(295, 146);
+  tft.print(char(0xda));
+
+  
+ }
+
+
+//************************************************************************************Top of gauge square 6
+    if((depth)<1305){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 128);
+  tft.print(char(0xda));
+  tft.setCursor(293, 128);
+ tft.setTextColor(ILI9341_ORANGE); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 128); tft.print(char(0x5d)); }
+  else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 128);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_ORANGE); tft.setTextSize(2);  
+  tft.setCursor(295, 128);
+  tft.print(char(0xda));
+
+  
+ }
+ 
+//************************************************************************************Top of gauge square 7
+    Serial.print("              *****************    depth as int  ");
+    Serial.println(depth);
+    if((depth)<1309){
+  
+     tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 110);
+  tft.print(char(0xda));
+ tft.setCursor(293, 110);
+ tft.setTextColor(ILI9341_RED); tft.setTextSize(2);      
+ tft.print(char(0x5b)); tft.setCursor(295, 110); tft.print(char(0x5d));  } // not hit
+ else{
+   tft.setTextColor(ILI9341_BLACK); tft.setTextSize(2);  
+  tft.setCursor(295, 110);
+  tft.print(char(0xda));
+   tft.setTextColor(ILI9341_RED); tft.setTextSize(2);  
+  tft.setCursor(295, 110);
+  tft.print(char(0xda));
+
+  
+ }
+ 
+
+tft.setCursor(10, 59);
+   tft.setTextColor(ILI9341_BLACK);    tft.setTextSize(2);
+tft.print("     ");
+
+tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));tft.print(char(0xda));
+
+   tft.setCursor(10, 59);
+//tft.setTextColor(ILI9341_RED);    tft.setTextSize(2);
+
+//tt/ft.print("DATA:");
+//tft.print(value5);
+
+
+                
+
+        } else {
+            USE_SERIAL.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        }
+
+        http.end();
+    }
+
+    delay(10);
+}
+
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+void starter(){
+
+    // wait for WiFi connection
+    if((WiFiMulti.run() == WL_CONNECTED)) {
+
+
+//****************************************************NTP
+
+  Serial.println("");
+  
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.println("Starting UDP");
+  udp.begin(localPort);
+  Serial.print("Local port: ");
+  Serial.println(udp.localPort());
+
+  timegrab();
+
+//*****************************************************
+     
+
+        HTTPClient http;
+
+        USE_SERIAL.print("[HTTP] begin...\n");
+        
+        http.begin("http://net-gen.uk/data.php"); //HTTP
+
+        USE_SERIAL.print("[HTTP] GET...\n");
+        // start connection and send HTTP header
+        int httpCode = http.GET();
+
+        // httpCode will be negative on error
+        if(httpCode > 0) {
+            // HTTP header has been send and Server response header has been handled
+            USE_SERIAL.printf("[HTTP] GET... code: %d\n", httpCode);
+
+            // file found at server
+            if(httpCode == HTTP_CODE_OK) {
+                String payload = http.getString();
+                USE_SERIAL.println(payload);
+/*
+
+
+//String value1, value2, value3, value4, value5, value6; 
+ 
+// For loop which will separate the String in parts
+// and assign them the the variables we declare
+for (int i = 0; i < payload.length(); i++) {
+  USE_SERIAL.println(i);
+  if (payload.substring(i, i+1) == "*") {
+    value1 = payload.substring(0, i);
+    value2= payload.substring(i+1);
+    break;
+  }
+}
+
+for (int i = 0; i < value2.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value2.substring(i, i+1) == "*") {
+   value3=  value2.substring(i+1);
+   value2 = value2.substring(0, i);
+    
+    break;
+  }
+}
+
+for (int i = 0; i < value3.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value3.substring(i, i+1) == "*") {
+   value4=  value3.substring(i+1);
+   value3 = value3.substring(0, i);
+    
+    break;
+  }
+}
+
+for (int i = 0; i < value4.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value4.substring(i, i+1) == "*") {
+   value5=  value4.substring(i+1);
+   value4 = value4.substring(0, i);
+    
+    break;
+  }
+}
+
+for (int i = 0; i < value5.length(); i++) {
+  USE_SERIAL.println(i);
+  if (value5.substring(i, i+1) == "*") {
+   value6=  value5.substring(i+1);
+   value5 = value5.substring(0, i);
+    
+    break;
+  }
+}
+
+
+*/
+
+
+
+
+
+tft.fillScreen(ILI9341_BLACK);
+ 
+   tft.setTextColor(ILI9341_BLACK);
+      tft.setCursor(20, 50);
+      
+       tft.setTextColor(ILI9341_WHITE);
+ 
+    tft.setCursor(20, 50);
+   
+  unsigned long start = micros();
+  tft.setCursor(0, 3);
+  tft.setTextColor(ILI9341_WHITE);  tft.setTextSize(2);
+  tft.println(" Mark's Pond MicroMonitor");
+   tft.setTextColor(ILI9341_YELLOW); tft.setTextSize(0);
+    tft.println(" "); 
+  tft.setTextSize(2);
+  tft.print("V6.5 Web            "); 
+   tft.print(hour()); 
+      tft.print(":"); 
+      if(minute()<10){
+        tft.print("0");
+      }
+         tft.println(minute()); 
+  tft.println("__________________________");
+
+  tft.println();
+    tft.println();
+   tft.setTextColor(ILI9341_BLUE);    tft.setTextSize(3);
+    tft.print("DEPTH ");
+    tft.setTextColor(ILI9341_WHITE);  tft.print("----");
+    tft.println(" MM");
+    tft.setTextColor(ILI9341_BLUE); 
+        tft.print("TEMP  ");
+ tft.setTextColor(ILI9341_WHITE);  tft.print("----");
+    tft.print(" ");
+    tft.print(char(247));
+     tft.println("C");
+     tft.setTextColor(ILI9341_GREEN);
+  //tft.setTextSize(5);
+  //tft.println("MPMC");
+    tft.println();
+  tft.setTextSize(2);
+         tft.print("Air    ");
+    tft.setTextColor(ILI9341_WHITE);  tft.print("----");
+    tft.println("C");
+     tft.setTextColor(ILI9341_GREEN);
+         tft.print("System ");
+   tft.setTextColor(ILI9341_WHITE);  tft.print("----");
+    tft.println("C");
+     tft.setTextColor(ILI9341_GREEN);
+     tft.print("Bar     ");
+        tft.setTextColor(ILI9341_WHITE);  tft.print("1.01322 ");
+           tft.println(" Pa");
+  tft.setTextSize(1);
+  tft.println("Status:");
+   tft.setTextSize(2);
+   
+ /*
+  * 
+  if (value4=="1.0") {
+  tft.println("OPTIMUM");
+ }
+  if (value4=="4.0") {
+  tft.println("HIGH");
+ }
+
+tft.setCursor(10, 59);
+tft.setTextColor(ILI9341_RED);    tft.setTextSize(0);
+
+//tft.print("Sample time :");
+//tft.print(value5);
+
+ */
+                
+
+        } else {
+            USE_SERIAL.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        }
+
+        http.end();
+    }
+//   digitalClockDisplay();
+    delay(100);
+}
+
+  
+}
+
+void timegrab()  {
+
+    unsigned long pctime;
+  const unsigned long DEFAULT_TIME = 1357041600; // Jan 1 2013
+   //get a random server from the pool
+  WiFi.hostByName(ntpServerName, timeServerIP); 
+
+  sendNTPpacket(timeServerIP); // send an NTP packet to a time server
+  // wait to see if a reply is available
+  delay(1000);
+  
+  int cb = udp.parsePacket();
+  if (!cb) {
+  
+     Serial.println("no packet yet");
+
+ 
+  }
+  else {
+    Serial.print("packet received, length=");
+    Serial.println(cb);
+    // We've received a packet, read the data from it
+    udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+
+    //the timestamp starts at byte 40 of the received packet and is four bytes,
+    // or two words, long. First, esxtract the two words:
+
+    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+    // combine the four bytes (two words) into a long integer
+    // this is NTP time (seconds since Jan 1 1900):
+  secsSince1900 = highWord << 16 | lowWord;
+     unsigned long secsSince1900 = highWord << 16 | lowWord;
+    Serial.print("Seconds since Jan 1 1900 = " );
+    Serial.println(secsSince1900);
+
+    // now convert NTP time into everyday time:
+    Serial.print("Unix time = ");
+    // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+    const unsigned long seventyYears = 2208988800UL;
+    // subtract seventy years:
+    unsigned long epoch = secsSince1900 - seventyYears;
+    // print Unix time:
+    Serial.println(epoch);
+
+  if(epoch >=DEFAULT_TIME) {
+    
+       setTime(epoch); // Sync Arduino clock to the time received on the serial port
+     Serial.print("time set via NTP!");
+  }
+
+
+
+
+    // print the hour, minute and second:
+    Serial.print("The UTC time is ");       // UTC is the time at Greenwich Meridian (GMT)
+    Serial.print((epoch  % 86400L) / 3600); // print the hour (86400 equals secs per day)
+    Serial.print(':');
+    if ( ((epoch % 3600) / 60) < 10 ) {
+      // In the first 10 minutes of each hour, we'll want a leading '0'
+      Serial.print('0');
+    }
+    Serial.print((epoch  % 3600) / 60); // print the minute (3600 equals secs per minute)
+    Serial.print(':');
+    if ( (epoch % 60) < 10 ) {
+      // In the first 10 seconds of each minute, we'll want a leading '0'
+      Serial.print('0');
+    }
+    Serial.println(epoch % 60); // print the second
+  }
+  // wait one seconds 
+  delay(1000);
+}
+
+
+// send an NTP request to the time server at the given address
+unsigned long sendNTPpacket(IPAddress& address)
+{
+  Serial.println("sending NTP packet...");
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  udp.beginPacket(address, 123); //NTP requests are to port 123
+  udp.write(packetBuffer, NTP_PACKET_SIZE);
+  udp.endPacket();
+}
+
+
+ 
+void handleRoot() {
+
+
+    webString="Hello from Marks ESP Pond MicroMonitor: " + value7 + " Pa";
+    server.send(200, "text/plain", webString); 
+
+  
+  //server.send(200, "text/plain", "hello");
+ //  server.send(200, "text/plain", value1);
+
+}
+
+void handleNotFound(){
+
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET)?"GET":"POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint8_t i=0; i<server.args(); i++){
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  server.send(404, "text/plain", message);
+  
+}
+
